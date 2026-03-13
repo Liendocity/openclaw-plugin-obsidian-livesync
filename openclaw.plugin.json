@@ -1,20 +1,24 @@
 {
   "id": "obsidian-livesync",
   "name": "Obsidian LiveSync",
-  "description": "Syncs your agent's workspace with an Obsidian vault using Self-hosted LiveSync protocol.",
-  "version": "1.0.0",
+  "description": "Syncs your agent's workspace with an Obsidian vault using the Setup URI and Passphrase.",
+  "version": "1.1.0",
   "author": "Raul",
   "repository": "https://github.com/rcordon/openclaw-plugin-obsidian-livesync",
   "configSchema": {
     "type": "object",
     "properties": {
-      "couchdb_url": { "type": "string", "description": "URL of your CouchDB database" },
-      "username": { "type": "string", "description": "CouchDB Username" },
-      "password": { "type": "string", "writeOnly": true, "description": "CouchDB Password" },
-      "passphrase": { "type": "string", "writeOnly": true, "description": "Obsidian LiveSync Encryption Passphrase" },
-      "salt": { "type": "string", "description": "PBKDF2 Salt (Base64) from LiveSync settings" }
+      "passphrase": { 
+        "type": "string", 
+        "writeOnly": true, 
+        "description": "Obsidian LiveSync Encryption Passphrase" 
+      },
+      "setup_uri": { 
+        "type": "string", 
+        "description": "The 'obsidian://setuplivesync?settings=...' URI or the settings string." 
+      }
     },
-    "required": ["couchdb_url", "username", "password", "passphrase", "salt"]
+    "required": ["passphrase", "setup_uri"]
   },
   "tools": [
     {
@@ -26,6 +30,14 @@
           "filePath": { "type": "string", "description": "Relative path of the file in the workspace" }
         },
         "required": ["filePath"]
+      }
+    },
+    {
+      "name": "obsidian_pull_vault",
+      "description": "Downloads and reconstructs the entire Obsidian vault from CouchDB to the local workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
       }
     }
   ]
