@@ -1,7 +1,7 @@
 {
   "name": "openclaw-plugin-obsidian-livesync",
-  "version": "1.0.0",
-  "description": "OpenClaw plugin to synchronize workspace with Obsidian via Self-hosted LiveSync (CouchDB)",
+  "version": "2.0.0",
+  "description": "Production-grade synchronization plugin for OpenClaw ↔ Obsidian vault via Self-hosted LiveSync (CouchDB). P0: Professional foundation (ACL, logging), P1: Robust automation (watcher, retry, versioning), P2: Intelligent performance (merge strategies, incremental sync, scheduling).",
   "main": "dist/index.js",
   "type": "module",
   "keywords": [
@@ -9,14 +9,29 @@
     "obsidian",
     "livesync",
     "couchdb",
-    "plugin"
+    "plugin",
+    "sync",
+    "collaboration",
+    "vault"
   ],
-  "author": "Raul",
+  "author": "Raul Cordón",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Liendocity/openclaw-plugin-obsidian-livesync.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Liendocity/openclaw-plugin-obsidian-livesync/issues"
+  },
+  "homepage": "https://github.com/Liendocity/openclaw-plugin-obsidian-livesync#readme",
   "scripts": {
     "build": "tsc",
     "watch": "tsc --watch",
-    "test": "node --loader ts-node/esm test/*.test.ts"
+    "test": "node test/retry.test.ts && node test/conflict.test.ts && node test/merge.test.ts && node test/scheduler.test.ts",
+    "test:retry": "node test/retry.test.ts",
+    "test:conflict": "node test/conflict.test.ts",
+    "test:merge": "node test/merge.test.ts",
+    "test:scheduler": "node test/scheduler.test.ts"
   },
   "dependencies": {
     "chokidar": "^3.6.0",
