@@ -2,7 +2,7 @@
   "id": "obsidian-livesync",
   "name": "Obsidian LiveSync",
   "description": "Syncs your agent's workspace with an Obsidian vault using the Setup URI and Passphrase. Includes multi-agent ACL by scope (000-099 = Raul, 100+ = Sky).",
-  "version": "2.0.0-p1",
+  "version": "2.0.0-p2",
   "author": "Raul",
   "repository": "https://github.com/Liendocity/openclaw-plugin-obsidian-livesync",
   "configSchema": {
@@ -110,6 +110,112 @@
         "type": "object",
         "properties": {}
       }
+    },
+    {
+      "name": "getNextSyncBatch",
+      "description": "P2: Get next batch of files to sync (incremental sync). Returns files that have changed since last sync.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "syncBatch",
+      "description": "P2: Sync a batch of files in one operation. Efficient for bulk uploads.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Array of file paths to sync"
+          }
+        },
+        "required": ["files"]
+      }
+    },
+    {
+      "name": "mergeConflict",
+      "description": "P2: Intelligently merge conflicting versions. Supports text, JSON, and Markdown with auto-detection.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filePath": { "type": "string", "description": "Path to the file" },
+          "localContent": { "type": "string", "description": "Local version content" },
+          "remoteContent": { "type": "string", "description": "Remote version content" },
+          "baseContent": { "type": "string", "description": "Base/original version (optional)" }
+        },
+        "required": ["filePath", "localContent", "remoteContent"]
+      }
+    },
+    {
+      "name": "getSchedules",
+      "description": "P2: Get list of all sync schedules.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "addSchedule",
+      "description": "P2: Add a new sync schedule (interval or cron-based).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "Schedule name" },
+          "type": { "type": "string", "enum": ["interval", "cron"], "description": "Schedule type" },
+          "intervalMs": { "type": "integer", "description": "Interval in milliseconds (for interval type)" },
+          "cronExpression": { "type": "string", "description": "Cron expression like '0 0 * * *' (for cron type)" }
+        },
+        "required": ["name", "type"]
+      }
+    },
+    {
+      "name": "setScheduleEnabled",
+      "description": "P2: Enable or disable a schedule.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "Schedule name" },
+          "enabled": { "type": "boolean", "description": "Enable (true) or disable (false)" }
+        },
+        "required": ["name", "enabled"]
+      }
+    },
+    {
+      "name": "triggerSchedule",
+      "description": "P2: Manually trigger a scheduled sync immediately.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "Schedule name" }
+        },
+        "required": ["name"]
+      }
+    },
+    {
+      "name": "getIncrementalSyncStats",
+      "description": "P2: Get statistics about incremental sync.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "resetIncrementalSyncTracking",
+      "description": "P2: Reset incremental sync tracking (force full sync on next batch).",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "stopScheduler",
+      "description": "P2: Stop all scheduled syncs.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
     }
   ],
   "notes": {
@@ -125,6 +231,14 @@
       "✅ Versioning: Full version history with revert capabilities",
       "✅ Test suite: Basic tests for retry, conflict resolution, and versioning",
       "✅ New tools: getVersionHistory(), revertToVersion(), setConflictStrategy(), getWatcherStatus()"
+    ],
+    "p2_improvements": [
+      "✅ Intelligent merge strategies: 3-way merge, Markdown-aware, JSON-aware",
+      "✅ Auto-merge on conflict detection: Resolve conflicts without manual intervention",
+      "✅ Incremental sync: Only sync changed files (huge performance boost)",
+      "✅ Sync scheduling: Interval-based and cron-based scheduled syncs",
+      "✅ Batch sync operations: Efficient bulk file uploads",
+      "✅ New tools: getNextSyncBatch(), syncBatch(), mergeConflict(), addSchedule(), triggerSchedule(), etc."
     ],
     "scopes": {
       "000-099": "Raul (personal workspace: INBOX, JOURNAL, ACTION, etc.)",

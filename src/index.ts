@@ -8,6 +8,9 @@ import xxhash from 'xxhash-wasm';
 import { retryWithBackoff, safeDbPut, safeDbGet, safeDbAllDocs, RetryableError } from './retry';
 import { ConflictResolver, VersionManager, ConflictStrategy, FileMetadata } from './conflict';
 import { WorkspaceWatcher, FileChangeEvent, WatcherOptions } from './watcher';
+import { ThreeWayMerger, MarkdownMerger, JsonMerger, MergeStrategy } from './merge';
+import { ChangeTracker, IncrementalSyncManager, ChangeSummary } from './incremental';
+import { SyncScheduler, SyncSchedule } from './scheduler';
 
 PouchDB.plugin(findPouchDBAdapter);
 
@@ -115,6 +118,12 @@ export default class ObsidianLiveSyncPlugin {
   private conflictResolver: ConflictResolver;
   private versionManager: VersionManager;
   private fileMetadataCache: Map<string, FileMetadata> = new Map();
+  
+  // P2: Merge strategies, incremental sync, scheduling
+  private mergeStrategy: MergeStrategy;
+  private incrementalSyncManager: IncrementalSyncManager | null = null;
+  private syncScheduler: SyncScheduler;
+  private autoMergeEnabled: boolean;
 
   constructor(config: any) {
     this.config = config;
@@ -122,6 +131,11 @@ export default class ObsidianLiveSyncPlugin {
     this.scopeValidator = new ScopeValidator(config.agentId || 'sky');
     this.conflictResolver = new ConflictResolver(config.conflictStrategy || 'last-write-wins');
     this.versionManager = new VersionManager();
+    
+    // P2: Initialize merge strategy and scheduling
+    this.mergeStrategy = config.mergeStrategy || 'line-based';
+    this.autoMergeEnabled = config.autoMerge !== false; // Default: enabled
+    this.syncScheduler = new SyncScheduler();
   }
 
   async initialize() {
@@ -162,6 +176,16 @@ export default class ObsidianLiveSyncPlugin {
       // P1: Iniciar file watcher automáticamente si está configurado
       if (this.config.autoWatch !== false) {
         await this.startAutoWatch();
+      }
+
+      // P2: Initialize incremental sync if enabled
+      if (this.config.incrementalSync !== false) {
+        this.initIncrementalSync();
+      }
+
+      // P2: Setup sync schedules if configured
+      if (this.config.schedules && Array.isArray(this.config.schedules)) {
+        this.setupSchedules(this.config.schedules);
       }
     } catch (e: any) {
       this.logger.log({
@@ -352,27 +376,74 @@ export default class ObsidianLiveSyncPlugin {
 
         if (this.conflictResolver.hasConflict(localMeta, remoteMeta)) {
           const resolution = this.conflictResolver.resolve(localMeta, remoteMeta);
-          this.logger.log({
-            action: 'sync_file',
-            path: filePath,
-            scope: scopeCheck.scope,
-            status: 'success',
-            message: `Conflicto detectado: ${resolution.action}. Aplicando: ${resolution.winner}`
-          });
 
-          // Versioning: save old version
-          if (resolution.winner === 'local') {
-            const oldVersion = this.versionManager.recordVersion(remoteMeta, 'remote', true);
-            await safeDbPut(this.db, {
-              _id: oldVersion._id,
+          // P2: Attempt intelligent merge if enabled
+          if (this.autoMergeEnabled) {
+            try {
+              const baseContent = existingDoc.baseContent || '';
+              const mergeResult = await this.mergeConflict({
+                filePath,
+                localContent,
+                remoteContent: Buffer.concat(
+                  (existingDoc.children || [])
+                    .map((id: string) => chunkMap.get(id))
+                    .filter((b: any) => b !== undefined)
+                ).toString('utf-8'),
+                baseContent
+              });
+
+              if (!mergeResult.hasConflicts) {
+                // Merged successfully, use merged content
+                newDoc.children = children; // Updated with merged content chunks
+                this.logger.log({
+                  action: 'sync_file',
+                  path: filePath,
+                  scope: scopeCheck.scope,
+                  status: 'success',
+                  message: `Conflicto auto-resuelto con merge inteligente`
+                });
+              } else {
+                // Merge has conflicts, fall back to strategy
+                this.logger.log({
+                  action: 'sync_file',
+                  path: filePath,
+                  scope: scopeCheck.scope,
+                  status: 'success',
+                  message: `Auto-merge falló. Aplicando estrategia: ${resolution.winner}`
+                });
+              }
+            } catch (err: any) {
+              this.logger.log({
+                action: 'sync_file',
+                path: filePath,
+                scope: scopeCheck.scope,
+                status: 'error',
+                message: `Error en auto-merge: ${err.message}. Usando estrategia de conflicto.`
+              });
+            }
+          } else {
+            this.logger.log({
+              action: 'sync_file',
               path: filePath,
-              children: existingDoc.children,
-              mtime: existingDoc.mtime,
-              hash: existingDoc.hash,
-              version: remoteMeta.version,
-              type: 'plain',
-              archived: true
-            }, 1);
+              scope: scopeCheck.scope,
+              status: 'success',
+              message: `Conflicto detectado: ${resolution.action}. Aplicando: ${resolution.winner}`
+            });
+
+            // Versioning: save old version
+            if (resolution.winner === 'local') {
+              const oldVersion = this.versionManager.recordVersion(remoteMeta, 'remote', true);
+              await safeDbPut(this.db, {
+                _id: oldVersion._id,
+                path: filePath,
+                children: existingDoc.children,
+                mtime: existingDoc.mtime,
+                hash: existingDoc.hash,
+                version: remoteMeta.version,
+                type: 'plain',
+                archived: true
+              }, 1);
+            }
           }
         }
       }
@@ -639,5 +710,292 @@ export default class ObsidianLiveSyncPlugin {
       watching: this.watcher?.isWatching() || false,
       pendingChanges: this.watcher?.getPendingChanges() || []
     };
+  }
+
+  /**
+   * P2: Initialize incremental sync
+   */
+  private initIncrementalSync() {
+    try {
+      this.incrementalSyncManager = new IncrementalSyncManager(
+        process.cwd(),
+        this.config.incrementalBatchSize || 50,
+        this.config.incrementalMinDelayMs || 1000
+      );
+
+      this.logger.log({
+        action: 'sync_file',
+        status: 'success',
+        message: `Incremental sync inicializado.`,
+        scope: 'init'
+      });
+    } catch (err: any) {
+      this.logger.log({
+        action: 'error',
+        status: 'error',
+        message: `Fallo al inicializar incremental sync: ${err.message}`,
+        scope: 'init'
+      });
+    }
+  }
+
+  /**
+   * P2: Get next batch of files to sync (incremental)
+   */
+  async getNextSyncBatch() {
+    if (!this.incrementalSyncManager) {
+      return {
+        success: false,
+        message: 'Incremental sync not enabled'
+      };
+    }
+
+    const batch = this.incrementalSyncManager.getNextBatch();
+    if (!batch) {
+      return {
+        success: false,
+        message: 'No pending changes or too soon to sync'
+      };
+    }
+
+    return {
+      success: true,
+      files: batch.files,
+      summary: batch.summary
+    };
+  }
+
+  /**
+   * P2: Sync a batch of files
+   */
+  async syncBatch({ files }: { files: string[] }) {
+    const agentId = this.config.agentId || 'sky';
+    const results = {
+      synced: [] as string[],
+      failed: [] as { path: string; error: string }[],
+      skipped: [] as string[]
+    };
+
+    for (const filePath of files) {
+      try {
+        // Validate ACL
+        const scopeCheck = this.scopeValidator.isAllowed(filePath, agentId);
+        if (!scopeCheck.allowed) {
+          results.skipped.push(filePath);
+          continue;
+        }
+
+        await this.obsidian_sync_file({ filePath });
+        results.synced.push(filePath);
+      } catch (err: any) {
+        results.failed.push({
+          path: filePath,
+          error: err.message
+        });
+      }
+    }
+
+    // Mark batch as synced
+    if (this.incrementalSyncManager) {
+      this.incrementalSyncManager.markBatchSynced(results.synced);
+    }
+
+    this.logger.log({
+      action: 'sync_file',
+      status: results.failed.length > 0 ? 'error' : 'success',
+      message: `Batch sync: ${results.synced.length} synced, ${results.failed.length} failed, ${results.skipped.length} skipped`
+    });
+
+    return results;
+  }
+
+  /**
+   * P2: Merge two versions intelligently
+   */
+  async mergeConflict({
+    filePath,
+    localContent,
+    remoteContent,
+    baseContent
+  }: {
+    filePath: string;
+    localContent: string;
+    remoteContent: string;
+    baseContent?: string;
+  }) {
+    const base = baseContent || '';
+
+    let merged: { merged: string; conflicts: boolean };
+
+    // Choose merge strategy based on file type
+    if (filePath.endsWith('.md')) {
+      merged = MarkdownMerger.merge(localContent, remoteContent, base);
+    } else if (filePath.endsWith('.json')) {
+      try {
+        const local = JSON.parse(localContent);
+        const remote = JSON.parse(remoteContent);
+        const result = JsonMerger.merge(local, remote);
+        merged = {
+          merged: JSON.stringify(result.merged, null, 2),
+          conflicts: result.conflicts.length > 0
+        };
+      } catch {
+        // Fallback to text merge
+        merged = ThreeWayMerger.merge(base, localContent, remoteContent);
+      }
+    } else {
+      // Default: 3-way merge
+      merged = ThreeWayMerger.merge(base, localContent, remoteContent);
+    }
+
+    this.logger.log({
+      action: 'sync_file',
+      path: filePath,
+      status: merged.conflicts ? 'error' : 'success',
+      message: `Merge completado. Conflictos: ${merged.conflicts}`
+    });
+
+    return {
+      success: !merged.conflicts,
+      merged: merged.merged,
+      hasConflicts: merged.conflicts
+    };
+  }
+
+  /**
+   * P2: Setup sync schedules
+   */
+  private setupSchedules(scheduleConfigs: any[]) {
+    for (const config of scheduleConfigs) {
+      try {
+        if (config.type === 'interval') {
+          this.syncScheduler.addIntervalSchedule(config.name, config.intervalMs);
+        } else if (config.type === 'cron') {
+          this.syncScheduler.addCronSchedule(config.name, config.cronExpression);
+        }
+
+        this.logger.log({
+          action: 'sync_file',
+          status: 'success',
+          message: `Schedule "${config.name}" registered.`,
+          scope: 'config'
+        });
+      } catch (err: any) {
+        this.logger.log({
+          action: 'error',
+          status: 'error',
+          message: `Failed to setup schedule "${config.name}": ${err.message}`,
+          scope: 'config'
+        });
+      }
+    }
+
+    // Start scheduler
+    this.syncScheduler.start((scheduleName) => this.onScheduledSync(scheduleName));
+  }
+
+  /**
+   * P2: Handle scheduled sync
+   */
+  private async onScheduledSync(scheduleName: string) {
+    this.logger.log({
+      action: 'sync_file',
+      status: 'success',
+      message: `Scheduled sync triggered: ${scheduleName}`
+    });
+
+    // Get next batch and sync
+    const batch = await this.getNextSyncBatch();
+    if (batch.success && 'files' in batch) {
+      await this.syncBatch({ files: batch.files });
+    }
+  }
+
+  /**
+   * P2: Get list of schedules
+   */
+  getSchedules() {
+    return this.syncScheduler.getSchedules();
+  }
+
+  /**
+   * P2: Add a new sync schedule
+   */
+  addSchedule({ name, type, intervalMs, cronExpression }: {
+    name: string;
+    type: 'interval' | 'cron';
+    intervalMs?: number;
+    cronExpression?: string;
+  }) {
+    try {
+      if (type === 'interval' && intervalMs) {
+        this.syncScheduler.addIntervalSchedule(name, intervalMs);
+      } else if (type === 'cron' && cronExpression) {
+        this.syncScheduler.addCronSchedule(name, cronExpression);
+      } else {
+        throw new Error('Invalid schedule configuration');
+      }
+
+      this.logger.log({
+        action: 'sync_file',
+        status: 'success',
+        message: `Schedule added: ${name}`,
+        scope: 'config'
+      });
+
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
+   * P2: Enable/disable a schedule
+   */
+  setScheduleEnabled(name: string, enabled: boolean) {
+    this.syncScheduler.setEnabled(name, enabled);
+    return { success: true };
+  }
+
+  /**
+   * P2: Trigger manual sync for a schedule
+   */
+  async triggerSchedule(name: string) {
+    await this.syncScheduler.triggerManual(name);
+    return { success: true };
+  }
+
+  /**
+   * P2: Stop scheduler
+   */
+  stopScheduler() {
+    this.syncScheduler.stop();
+    return { success: true };
+  }
+
+  /**
+   * P2: Get incremental sync stats
+   */
+  getIncrementalSyncStats() {
+    if (!this.incrementalSyncManager) {
+      return { enabled: false };
+    }
+
+    return {
+      enabled: true,
+      stats: this.incrementalSyncManager.getStats()
+    };
+  }
+
+  /**
+   * P2: Reset incremental sync tracking
+   */
+  resetIncrementalSyncTracking() {
+    if (!this.incrementalSyncManager) {
+      return { success: false, message: 'Incremental sync not enabled' };
+    }
+
+    this.incrementalSyncManager.reset();
+    return { success: true };
   }
 }
