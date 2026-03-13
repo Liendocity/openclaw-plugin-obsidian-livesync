@@ -1,10 +1,10 @@
 {
   "id": "obsidian-livesync",
   "name": "Obsidian LiveSync",
-  "description": "Syncs your agent's workspace with an Obsidian vault using the Setup URI and Passphrase.",
-  "version": "1.1.0",
+  "description": "Syncs your agent's workspace with an Obsidian vault using the Setup URI and Passphrase. Includes multi-agent ACL by scope (000-099 = Raul, 100+ = Sky).",
+  "version": "2.0.0-p0",
   "author": "Raul",
-  "repository": "https://github.com/rcordon/openclaw-plugin-obsidian-livesync",
+  "repository": "https://github.com/Liendocity/openclaw-plugin-obsidian-livesync",
   "configSchema": {
     "type": "object",
     "properties": {
@@ -15,7 +15,12 @@
       },
       "setup_uri": { 
         "type": "string", 
-        "description": "The 'obsidian://setuplivesync?settings=...' URI or the settings string." 
+        "description": "The 'obsidian://setuplivesync?settings=...' URI from Obsidian LiveSync plugin settings. Must contain pbkdf2_salts."
+      },
+      "agentId": {
+        "type": "string",
+        "description": "Agent identifier for ACL scope validation. Defaults to 'sky'. Examples: 'sky', 'raul', 'shared'",
+        "default": "sky"
       }
     },
     "required": ["passphrase", "setup_uri"]
@@ -23,22 +28,45 @@
   "tools": [
     {
       "name": "obsidian_sync_file",
-      "description": "Syncs a local file from the workspace to the Obsidian vault in CouchDB.",
+      "description": "Syncs a local file from the workspace to the Obsidian vault in CouchDB. Enforces ACL by agent scope.",
       "parameters": {
         "type": "object",
         "properties": {
-          "filePath": { "type": "string", "description": "Relative path of the file in the workspace" }
+          "filePath": { 
+            "type": "string", 
+            "description": "Relative path of the file in the workspace (e.g., '100.Sky/memory/notes.md'). Must match agent's allowed scope." 
+          }
         },
         "required": ["filePath"]
       }
     },
     {
       "name": "obsidian_pull_vault",
-      "description": "Downloads and reconstructs the entire Obsidian vault from CouchDB to the local workspace.",
+      "description": "Downloads and reconstructs the entire Obsidian vault from CouchDB to the local workspace. Only writes files matching the agent's scope.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "getAuditLog",
+      "description": "Retrieves the sync audit log for debugging and monitoring.",
       "parameters": {
         "type": "object",
         "properties": {}
       }
     }
-  ]
+  ],
+  "notes": {
+    "p0_improvements": [
+      "✅ Salt extraction: Now dynamically extracted from setup_uri (no hardcoded values)",
+      "✅ Multi-agent ACL: Scope-based access control (000-099 vs 100+)",
+      "✅ Structured logging: Audit trail with timestamps, actions, paths, and scope info"
+    ],
+    "scopes": {
+      "000-099": "Raul (personal workspace: INBOX, JOURNAL, ACTION, etc.)",
+      "100-199": "Sky (agent memory: journal, memory, analysis, etc.)",
+      "200+": "Shared (future expansion)"
+    }
+  }
 }

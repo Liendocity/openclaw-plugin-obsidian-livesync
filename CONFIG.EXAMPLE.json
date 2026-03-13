@@ -1,0 +1,5 @@
+{
+  "passphrase": "your-obsidian-livesync-passphrase",
+  "setup_uri": "obsidian://setuplivesync?settings=<encrypted-settings-from-obsidian>",
+  "agentId": "sky"
+}
