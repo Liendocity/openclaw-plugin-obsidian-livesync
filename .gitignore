@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.log
+.env
+uri_output.txt
+uri_output_v2.txt
+test_*.js
+test_*.mjs
+inspect_*.js
+list_*.js
+search_all.js
+verify_setup.js
+get_config.js
+meta_output.json
+reconstructed_vault/
+vrtmrz*/
+rtmrz3/
