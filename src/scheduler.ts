@@ -3,6 +3,7 @@
  */
 
 export type ScheduleType = 'interval' | 'cron' | 'on-demand';
+export type CronParseResult = { minute?: number[]; hour?: number[]; dayOfMonth?: number[] };
 
 export interface SyncSchedule {
   type: ScheduleType;
@@ -18,14 +19,10 @@ export interface SyncSchedule {
 /**
  * Simple cron expression parser (supports basic patterns)
  * Format: "0 0 * * *" -> minute hour day month dayOfWeek
- * Supports: *, numbers, ranges (1-5), steps (*/5)
+ * Supports: asterisk, numbers, ranges (1-5), steps (every 5: `*` slash `5`)
  */
 export class SimpleCronParser {
-  static parse(cronExpr: string): {
-    minute?: number[];
-    hour?: number[];
-    dayOfMonth?: number[];
-  } | null {
+  static parse(cronExpr: string): CronParseResult | null {
     const parts = cronExpr.trim().split(/\s+/);
     if (parts.length < 5) {
       console.warn(`Invalid cron expression: ${cronExpr}`);

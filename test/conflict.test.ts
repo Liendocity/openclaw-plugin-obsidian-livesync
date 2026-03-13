@@ -2,7 +2,16 @@
  * Basic tests for conflict resolver
  */
 
-import { ConflictResolver, VersionManager, FileMetadata } from '../src/conflict';
+import { ConflictResolver, VersionManager } from '../dist/conflict.js';
+
+interface FileMetadata {
+  _id: string;
+  path: string;
+  mtime: number;
+  hash: string;
+  size: number;
+  version: number;
+}
 
 function testLastWriteWins() {
   const resolver = new ConflictResolver('last-write-wins');

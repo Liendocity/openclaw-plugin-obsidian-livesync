@@ -2,7 +2,7 @@
  * Tests for intelligent merge strategies
  */
 
-import { ThreeWayMerger, JsonMerger, MarkdownMerger } from '../src/merge';
+import { ThreeWayMerger, JsonMerger, MarkdownMerger } from '../dist/merge.js';
 
 function testThreeWayMergeNoConflict() {
   const base = 'line1\nline2\nline3';
