@@ -1,5 +1,95 @@
 # Changelog
 
+## [2.0.0-p1] - 2026-03-13
+
+### 🚀 P1 Features: Robustness & Automation
+
+#### File Watcher & Auto-Sync
+- **[NEW]** `WorkspaceWatcher` class with chokidar integration
+  - Automatic file change detection (add, change, unlink)
+  - Debouncing to prevent duplicate syncs
+  - Respects scope configuration (000+, 100+, etc.)
+  - Configurable watched folders and ignore patterns
+- **[NEW]** Automatic sync on file changes (optional, enabled by default)
+  - Set `autoWatch: false` to disable
+  - Configurable debounce delay
+  - Auto-sync logged separately for audit trail
+
+#### Retry Logic with Exponential Backoff
+- **[NEW]** `retryWithBackoff()` utility with configurable parameters
+  - Exponential backoff to prevent overwhelming the server
+  - Jitter to avoid thundering herd problem
+  - Custom `RetryableError` for error context
+- **[NEW]** Safe wrapper functions for PouchDB operations
+  - `safeDbPut()`, `safeDbGet()`, `safeDbAllDocs()`
+  - Automatic retry on transient failures (network timeouts, etc.)
+  - Reduces sync failures from temporary network issues
+
+#### Conflict Resolution & Versioning
+- **[NEW]** `ConflictResolver` class with multiple strategies
+  - `last-write-wins` (default): Latest timestamp wins
+  - `remote-wins`: Always trust remote version
+  - `local-wins`: Always keep local version
+  - `keep-both`: Archive conflicts and keep both versions
+- **[NEW]** `VersionManager` for tracking file versions
+  - Automatic version bumping on sync
+  - Version history stored with each file
+  - Ability to revert to previous versions
+- **[NEW]** Conflict detection during sync
+  - Compares hashes and timestamps
+  - Automatically archives old versions
+  - Logs conflict resolution decisions
+
+#### New Tools
+- **`getVersionHistory(filePath)`**: View version history and metadata
+- **`revertToVersion(filePath, versionNumber)`**: Restore previous version (respects ACL)
+- **`setConflictStrategy(strategy)`**: Change resolution strategy at runtime
+- **`getWatcherStatus()`**: Check file watcher status and pending changes
+
+#### Code Quality & Testing
+- **[NEW]** TypeScript interfaces for Watcher and Conflict types
+- **[NEW]** Basic test suite with `test/*.test.ts`
+  - Retry logic tests (success, failure, backoff timing)
+  - Conflict resolution tests (strategies, detection, versioning)
+  - Run with: `npm test`
+- **[IMPROVED]** Package.json scripts
+  - `npm run build`: Compile TypeScript
+  - `npm run watch`: Watch mode for development
+  - `npm test`: Run test suite
+
+#### Configuration Updates
+- New optional config parameter: `conflictStrategy` (default: 'last-write-wins')
+- New optional config parameter: `autoWatch` (default: true)
+- New optional config parameter: `watchedScopes` (default: ['100', '101', '102', '103', '104'])
+- New optional config parameter: `watcherDebounceMs` (default: 500)
+
+### 📝 Documentation
+- Updated README with P1 features
+- Added troubleshooting for conflict scenarios
+- Detailed version management examples
+
+### ✅ P1 Checklist Complete
+
+- [x] File watcher for automatic sync
+- [x] Retry logic with exponential backoff
+- [x] Conflict detection and resolution
+- [x] Versioning and revert capabilities
+- [x] Multiple conflict strategies
+- [x] Basic test suite
+- [x] Documentation updates
+
+### 📌 Next Steps (P2 & Beyond)
+
+- [ ] Merge strategies for intelligent conflict resolution
+- [ ] Incremental sync (only changed files/chunks)
+- [ ] Sync scheduling (cron-style intervals)
+- [ ] Better error recovery (offline mode, queue)
+- [ ] Performance: parallel chunk uploads/downloads
+- [ ] Full integration tests with real CouchDB
+- [ ] CI/CD pipeline with automated testing
+
+---
+
 ## [2.0.0-p0] - 2026-03-13
 
 ### ✨ P0 Professional Improvements

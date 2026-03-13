@@ -2,8 +2,12 @@ import PouchDB from 'pouchdb';
 import findPouchDBAdapter from 'pouchdb-adapter-http';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { encrypt as encryptHKDF, decrypt as decryptHKDF, decryptWithEphemeralSalt } from 'octagonal-wheels/encryption/hkdf';
 import xxhash from 'xxhash-wasm';
+import { retryWithBackoff, safeDbPut, safeDbGet, safeDbAllDocs, RetryableError } from './retry';
+import { ConflictResolver, VersionManager, ConflictStrategy, FileMetadata } from './conflict';
+import { WorkspaceWatcher, FileChangeEvent, WatcherOptions } from './watcher';
 
 PouchDB.plugin(findPouchDBAdapter);
 
@@ -107,11 +111,17 @@ export default class ObsidianLiveSyncPlugin {
   private logger: StructuredLogger;
   private scopeValidator: ScopeValidator;
   private pbkdf2Salt: Uint8Array | null = null;
+  private watcher: WorkspaceWatcher | null = null;
+  private conflictResolver: ConflictResolver;
+  private versionManager: VersionManager;
+  private fileMetadataCache: Map<string, FileMetadata> = new Map();
 
   constructor(config: any) {
     this.config = config;
     this.logger = new StructuredLogger();
     this.scopeValidator = new ScopeValidator(config.agentId || 'sky');
+    this.conflictResolver = new ConflictResolver(config.conflictStrategy || 'last-write-wins');
+    this.versionManager = new VersionManager();
   }
 
   async initialize() {
@@ -148,6 +158,11 @@ export default class ObsidianLiveSyncPlugin {
         message: `Plugin inicializado. Conectado a CouchDB.`,
         scope: 'init'
       });
+
+      // P1: Iniciar file watcher automáticamente si está configurado
+      if (this.config.autoWatch !== false) {
+        await this.startAutoWatch();
+      }
     } catch (e: any) {
       this.logger.log({
         action: 'error',
@@ -156,6 +171,78 @@ export default class ObsidianLiveSyncPlugin {
         scope: 'init'
       });
       throw e;
+    }
+  }
+
+  /**
+   * P1: Start automatic file watcher
+   */
+  async startAutoWatch() {
+    try {
+      const watcherOptions: WatcherOptions = {
+        watched: this.config.watchedScopes || ['100', '101', '102', '103', '104'],
+        debounceMs: this.config.watcherDebounceMs || 500
+      };
+
+      this.watcher = new WorkspaceWatcher(process.cwd(), watcherOptions);
+      await this.watcher.start((events) => this.onFilesChanged(events));
+
+      this.logger.log({
+        action: 'sync_file',
+        status: 'success',
+        message: `File watcher iniciado. Monitoreando cambios automáticos.`,
+        scope: 'init'
+      });
+    } catch (err: any) {
+      this.logger.log({
+        action: 'error',
+        status: 'error',
+        message: `Fallo al iniciar file watcher: ${err.message}`,
+        scope: 'init'
+      });
+      // No throw, watcher es opcional
+    }
+  }
+
+  /**
+   * P1: Handle file changes from watcher
+   */
+  private async onFilesChanged(events: FileChangeEvent[]) {
+    for (const event of events) {
+      try {
+        if (event.event === 'unlink') {
+          // TODO: Handle file deletion (mark as deleted in DB)
+          console.log(`[AutoSync] Archivo eliminado: ${event.filePath}`);
+        } else {
+          // Auto-sync on add/change
+          const result = await this.obsidian_sync_file({ filePath: event.filePath });
+          this.logger.log({
+            action: 'sync_file',
+            path: event.filePath,
+            status: 'success',
+            message: `Auto-sincronizado: ${event.event}`,
+            scope: event.filePath.split('/')[0]
+          });
+        }
+      } catch (err: any) {
+        this.logger.log({
+          action: 'sync_file',
+          path: event.filePath,
+          status: 'error',
+          message: `Auto-sync fallido: ${err.message}`,
+          scope: event.filePath.split('/')[0]
+        });
+      }
+    }
+  }
+
+  /**
+   * P1: Stop file watcher
+   */
+  async stopAutoWatch() {
+    if (this.watcher) {
+      await this.watcher.stop();
+      this.watcher = null;
     }
   }
 
@@ -193,7 +280,7 @@ export default class ObsidianLiveSyncPlugin {
       const children: string[] = [];
       let chunkCount = 0;
 
-      // Chunking y encripción
+      // Chunking y encripción (con retry)
       for (let i = 0; i < content.length; i += CHUNK_SIZE) {
         const chunkData = content.slice(i, i + CHUNK_SIZE);
         const chunkHash = this.hasher.h64(chunkData.toString('binary'));
@@ -206,12 +293,12 @@ export default class ObsidianLiveSyncPlugin {
         );
 
         try {
-          await this.db.put({
+          await safeDbPut(this.db, {
             _id: chunkId,
             data: encryptedData,
             type: 'leaf',
             e_: true
-          });
+          }, 2); // Retry 2 times
           chunkCount++;
         } catch (err: any) {
           if (err.status !== 409) throw err; // 409 = conflict (ya existe)
@@ -219,15 +306,16 @@ export default class ObsidianLiveSyncPlugin {
         children.push(chunkId);
       }
 
-      // Crear/actualizar documento
+      // Crear/actualizar documento (con P1: conflict detection)
       const docId = filePath.toLowerCase().replace(/\\/g, '/');
       let existingDoc: any = {};
       try {
-        existingDoc = await this.db.get(docId);
+        existingDoc = await safeDbGet(this.db, docId, 2);
       } catch (err: any) {
         if (err.status !== 404) throw err;
       }
 
+      const contentHash = crypto.createHash('sha256').update(content).digest('hex');
       const newDoc = {
         ...existingDoc,
         _id: docId,
@@ -236,11 +324,60 @@ export default class ObsidianLiveSyncPlugin {
         ctime: existingDoc.ctime || Date.now(),
         mtime: Date.now(),
         size: content.length,
+        hash: contentHash,
+        version: (existingDoc.version || 0) + 1,
         type: 'plain',
         eden: {}
       };
 
-      await this.db.put(newDoc);
+      // P1: Detect conflicts
+      if (existingDoc._id) {
+        const localMeta: FileMetadata = {
+          _id: docId,
+          path: filePath,
+          mtime: Date.now(),
+          hash: contentHash,
+          size: content.length,
+          version: newDoc.version
+        };
+
+        const remoteMeta: FileMetadata = {
+          _id: existingDoc._id,
+          path: existingDoc.path,
+          mtime: existingDoc.mtime || 0,
+          hash: existingDoc.hash || '',
+          size: existingDoc.size || 0,
+          version: existingDoc.version || 0
+        };
+
+        if (this.conflictResolver.hasConflict(localMeta, remoteMeta)) {
+          const resolution = this.conflictResolver.resolve(localMeta, remoteMeta);
+          this.logger.log({
+            action: 'sync_file',
+            path: filePath,
+            scope: scopeCheck.scope,
+            status: 'success',
+            message: `Conflicto detectado: ${resolution.action}. Aplicando: ${resolution.winner}`
+          });
+
+          // Versioning: save old version
+          if (resolution.winner === 'local') {
+            const oldVersion = this.versionManager.recordVersion(remoteMeta, 'remote', true);
+            await safeDbPut(this.db, {
+              _id: oldVersion._id,
+              path: filePath,
+              children: existingDoc.children,
+              mtime: existingDoc.mtime,
+              hash: existingDoc.hash,
+              version: remoteMeta.version,
+              type: 'plain',
+              archived: true
+            }, 1);
+          }
+        }
+      }
+
+      await safeDbPut(this.db, newDoc, 3);
 
       this.logger.log({
         action: 'sync_file',
@@ -287,7 +424,8 @@ export default class ObsidianLiveSyncPlugin {
         scope: agentId
       });
 
-      const result = await this.db.allDocs({ include_docs: true });
+      // P1: Fetch with retry
+      const result = await safeDbAllDocs(this.db, { include_docs: true }, 3);
       const chunkMap = new Map();
       const fileDocs = [];
 
@@ -392,5 +530,114 @@ export default class ObsidianLiveSyncPlugin {
    */
   getAuditLog() {
     return this.logger.getAuditLog();
+  }
+
+  /**
+   * P1: Get file version history
+   */
+  async getVersionHistory({ filePath }: { filePath: string }) {
+    const docId = filePath.toLowerCase().replace(/\\/g, '/');
+    try {
+      const doc = await safeDbGet(this.db, docId, 2);
+      return {
+        success: true,
+        path: filePath,
+        version: doc.version || 1,
+        mtime: doc.mtime,
+        versions: doc.versions || []
+      };
+    } catch (err: any) {
+      if (err.status === 404) {
+        return {
+          success: false,
+          message: `Archivo no encontrado: ${filePath}`
+        };
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * P1: Revert to a previous version
+   */
+  async revertToVersion({ filePath, versionNumber }: { filePath: string; versionNumber: number }) {
+    const agentId = this.config.agentId || 'sky';
+
+    // Validar ACL
+    const scopeCheck = this.scopeValidator.isAllowed(filePath, agentId);
+    if (!scopeCheck.allowed) {
+      throw new Error(`[ACL VIOLATION] ${scopeCheck.reason}`);
+    }
+
+    try {
+      const docId = filePath.toLowerCase().replace(/\\/g, '/');
+      const currentDoc = await safeDbGet(this.db, docId, 2);
+
+      const versionedDocId = `${docId}.v${versionNumber}`;
+      const versionedDoc = await safeDbGet(this.db, versionedDocId, 2);
+
+      if (!versionedDoc) {
+        throw new Error(`Versión ${versionNumber} no encontrada`);
+      }
+
+      // Revert: restore versioned content
+      const revertedDoc = {
+        ...currentDoc,
+        _id: docId,
+        children: versionedDoc.children,
+        mtime: Date.now(),
+        hash: versionedDoc.hash,
+        version: currentDoc.version + 1,
+        reverted_from_version: versionNumber
+      };
+
+      await safeDbPut(this.db, revertedDoc, 3);
+
+      this.logger.log({
+        action: 'sync_file',
+        path: filePath,
+        scope: scopeCheck.scope,
+        status: 'success',
+        message: `Revertido a versión ${versionNumber}`
+      });
+
+      return {
+        success: true,
+        message: `Revertido a versión ${versionNumber}`,
+        newVersion: revertedDoc.version
+      };
+    } catch (err: any) {
+      this.logger.log({
+        action: 'sync_file',
+        path: filePath,
+        status: 'error',
+        message: `Fallo al revertir: ${err.message}`,
+        scope: agentId
+      });
+      throw err;
+    }
+  }
+
+  /**
+   * P1: Set conflict resolution strategy
+   */
+  setConflictStrategy(strategy: ConflictStrategy) {
+    this.conflictResolver.setStrategy(strategy);
+    this.logger.log({
+      action: 'sync_file',
+      status: 'success',
+      message: `Estrategia de conflictos establecida: ${strategy}`,
+      scope: 'config'
+    });
+  }
+
+  /**
+   * P1: Get watcher status
+   */
+  getWatcherStatus() {
+    return {
+      watching: this.watcher?.isWatching() || false,
+      pendingChanges: this.watcher?.getPendingChanges() || []
+    };
   }
 }

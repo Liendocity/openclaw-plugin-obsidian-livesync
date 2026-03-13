@@ -2,7 +2,7 @@
   "id": "obsidian-livesync",
   "name": "Obsidian LiveSync",
   "description": "Syncs your agent's workspace with an Obsidian vault using the Setup URI and Passphrase. Includes multi-agent ACL by scope (000-099 = Raul, 100+ = Sky).",
-  "version": "2.0.0-p0",
+  "version": "2.0.0-p1",
   "author": "Raul",
   "repository": "https://github.com/Liendocity/openclaw-plugin-obsidian-livesync",
   "configSchema": {
@@ -28,7 +28,7 @@
   "tools": [
     {
       "name": "obsidian_sync_file",
-      "description": "Syncs a local file from the workspace to the Obsidian vault in CouchDB. Enforces ACL by agent scope.",
+      "description": "Syncs a local file from the workspace to the Obsidian vault in CouchDB. Enforces ACL by agent scope. Includes automatic conflict detection and versioning.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -55,6 +55,61 @@
         "type": "object",
         "properties": {}
       }
+    },
+    {
+      "name": "getVersionHistory",
+      "description": "Get version history and conflict metadata for a file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filePath": { 
+            "type": "string", 
+            "description": "Path to the file (e.g., '100.Sky/memory/notes.md')"
+          }
+        },
+        "required": ["filePath"]
+      }
+    },
+    {
+      "name": "revertToVersion",
+      "description": "Revert a file to a previous version. Enforces ACL.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filePath": { 
+            "type": "string", 
+            "description": "Path to the file"
+          },
+          "versionNumber": {
+            "type": "integer",
+            "description": "Version number to revert to"
+          }
+        },
+        "required": ["filePath", "versionNumber"]
+      }
+    },
+    {
+      "name": "setConflictStrategy",
+      "description": "Set the conflict resolution strategy: 'last-write-wins', 'remote-wins', 'local-wins', or 'keep-both'.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "strategy": { 
+            "type": "string", 
+            "enum": ["last-write-wins", "remote-wins", "local-wins", "keep-both"],
+            "description": "Conflict resolution strategy"
+          }
+        },
+        "required": ["strategy"]
+      }
+    },
+    {
+      "name": "getWatcherStatus",
+      "description": "Get status of the automatic file watcher and pending changes.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
     }
   ],
   "notes": {
@@ -62,6 +117,14 @@
       "✅ Salt extraction: Now dynamically extracted from setup_uri (no hardcoded values)",
       "✅ Multi-agent ACL: Scope-based access control (000-099 vs 100+)",
       "✅ Structured logging: Audit trail with timestamps, actions, paths, and scope info"
+    ],
+    "p1_improvements": [
+      "✅ File watcher: Automatic sync on file changes (optional, configurable)",
+      "✅ Retry logic: Exponential backoff for transient network failures",
+      "✅ Conflict detection: Automatic conflict resolution with multiple strategies",
+      "✅ Versioning: Full version history with revert capabilities",
+      "✅ Test suite: Basic tests for retry, conflict resolution, and versioning",
+      "✅ New tools: getVersionHistory(), revertToVersion(), setConflictStrategy(), getWatcherStatus()"
     ],
     "scopes": {
       "000-099": "Raul (personal workspace: INBOX, JOURNAL, ACTION, etc.)",

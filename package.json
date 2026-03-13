@@ -13,13 +13,20 @@
   ],
   "author": "Raul",
   "license": "MIT",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "test": "node --loader ts-node/esm test/*.test.ts"
+  },
   "dependencies": {
+    "chokidar": "^3.6.0",
     "octagonal-wheels": "^0.1.45",
     "pouchdb": "^9.0.0",
     "pouchdb-adapter-http": "^9.0.0",
     "xxhash-wasm": "^1.0.2"
   },
   "devDependencies": {
+    "@types/chokidar": "^2.1.10",
     "@types/node": "^25.5.0",
     "@types/pouchdb": "^6.4.2",
     "typescript": "^5.9.3"
