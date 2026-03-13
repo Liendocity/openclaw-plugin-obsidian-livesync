@@ -1,0 +1,22 @@
+{
+  "name": "openclaw-plugin-obsidian-livesync",
+  "version": "1.0.0",
+  "description": "OpenClaw plugin to synchronize workspace with Obsidian via Self-hosted LiveSync (CouchDB)",
+  "main": "dist/index.js",
+  "type": "module",
+  "keywords": [
+    "openclaw",
+    "obsidian",
+    "livesync",
+    "couchdb",
+    "plugin"
+  ],
+  "author": "Raul",
+  "license": "MIT",
+  "dependencies": {
+    "pouchdb": "^9.0.0",
+    "pouchdb-adapter-http": "^9.0.0",
+    "octagonal-wheels": "^0.1.45",
+    "xxhash-wasm": "^1.0.2"
+  }
+}
