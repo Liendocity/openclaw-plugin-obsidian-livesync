@@ -30,9 +30,9 @@ export class SimpleCronParser {
     }
 
     return {
-      minute: this.parseField(parts[0], 0, 59),
-      hour: this.parseField(parts[1], 0, 23),
-      dayOfMonth: this.parseField(parts[2], 1, 31)
+      minute: this.parseField(parts[0], 0, 59) ?? undefined,
+      hour: this.parseField(parts[1], 0, 23) ?? undefined,
+      dayOfMonth: this.parseField(parts[2], 1, 31) ?? undefined
     };
   }
 
@@ -61,9 +61,11 @@ export class SimpleCronParser {
       const [base, step] = field.split('/');
       const stepNum = Number(step);
       if (base === '*') {
-        return Array.from({ length: Math.ceil((max - min + 1) / stepNum) }, (_, i) =>
-          Math.min(min + i * stepNum, max)
-        );
+        const result = [];
+        for (let i = min; i <= max; i += stepNum) {
+          result.push(i);
+        }
+        return result;
       }
     }
 
@@ -88,9 +90,9 @@ export class SimpleCronParser {
     const dayOfMonth = now.getDate();
 
     return (
-      parsed.minute?.includes(minute) &&
-      parsed.hour?.includes(hour) &&
-      parsed.dayOfMonth?.includes(dayOfMonth)
+      (parsed.minute?.includes(minute) ?? false) &&
+      (parsed.hour?.includes(hour) ?? false) &&
+      (parsed.dayOfMonth?.includes(dayOfMonth) ?? false)
     );
   }
 }
@@ -255,12 +257,22 @@ export class SyncScheduler {
     const parsed = SimpleCronParser.parse(cronExpr);
     if (!parsed) return 0;
 
-    // Simple approximation: just assume next day
-    const now = new Date();
-    now.setDate(now.getDate() + 1);
-    now.setHours(parsed.hour?.[0] || 0);
-    now.setMinutes(parsed.minute?.[0] || 0);
+    let next = new Date();
+    next.setSeconds(0);
+    next.setMilliseconds(0);
+    
+    // Increment by 1 minute until we find a match
+    // (Up to 1 month to avoid infinite loops)
+    const limit = new Date(next);
+    limit.setMonth(limit.getMonth() + 1);
 
-    return now.getTime();
+    while (next < limit) {
+      next.setMinutes(next.getMinutes() + 1);
+      if (SimpleCronParser.matches(cronExpr, next)) {
+        return next.getTime();
+      }
+    }
+
+    return 0; // No match found in reasonable time
   }
 }

@@ -95,7 +95,7 @@ export class JsonMerger {
   static merge(
     local: any,
     remote: any,
-    options: { preferRemote?: boolean } = {}
+    options: { preferRemote?: boolean; base?: any } = {}
   ): { merged: any; conflicts: string[] } {
     const conflicts: string[] = [];
     const merged = { ...local };
@@ -107,25 +107,48 @@ export class JsonMerger {
       } else {
         const localVal = local[key];
         const remoteVal = remote[key];
+        const baseVal = options.base ? options.base[key] : undefined;
 
         if (Array.isArray(localVal) && Array.isArray(remoteVal)) {
-          // Merge arrays: keep unique items
+          // Merge arrays: keep unique items from both
           const combined = [...localVal];
           for (const item of remoteVal) {
-            if (!combined.includes(item)) {
+            if (!combined.some(i => JSON.stringify(i) === JSON.stringify(item))) {
               combined.push(item);
             }
           }
           merged[key] = combined;
-        } else if (typeof localVal === 'object' && typeof remoteVal === 'object') {
-          // Recursive merge
-          const result = this.merge(localVal, remoteVal, options);
+        } else if (localVal !== null && typeof localVal === 'object' && 
+                   remoteVal !== null && typeof remoteVal === 'object' &&
+                   !Array.isArray(localVal) && !Array.isArray(remoteVal)) {
+          // Recursive merge for objects
+          const result = this.merge(localVal, remoteVal, { ...options, base: baseVal });
           merged[key] = result.merged;
           conflicts.push(...result.conflicts.map(c => `${key}.${c}`));
         } else if (localVal !== remoteVal) {
           // Primitive conflict
-          conflicts.push(`${key}: local=${localVal}, remote=${remoteVal}`);
-          merged[key] = options.preferRemote ? remoteVal : localVal;
+          // If we have base, check if only one side changed
+          if (options.base && key in options.base) {
+            if (localVal === baseVal) {
+              // Only remote changed
+              merged[key] = remoteVal;
+            } else if (remoteVal === baseVal) {
+              // Only local changed (already in merged)
+              merged[key] = localVal;
+            } else {
+              // Both changed differently
+              conflicts.push(`${key}: local=${localVal}, remote=${remoteVal}, base=${baseVal}`);
+              merged[key] = options.preferRemote ? remoteVal : localVal;
+            }
+          } else {
+            // 2-way merge conflict: always record unless preference is clear
+            if (localVal !== remoteVal) {
+              // Only record conflict if they are actually different
+              // Check for null/undefined mismatch specifically
+              conflicts.push(`${key}: local=${localVal}, remote=${remoteVal}`);
+              merged[key] = options.preferRemote ? remoteVal : localVal;
+            }
+          }
         }
       }
     }

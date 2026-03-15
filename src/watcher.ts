@@ -157,7 +157,7 @@ export class WorkspaceWatcher {
   private computeHash(filePath: string): string {
     try {
       const content = fs.readFileSync(filePath);
-      return crypto.createHash('sha256').update(content).digest('hex');
+      return crypto.createHash('sha256').update(content as any).digest('hex');
     } catch {
       return '';
     }

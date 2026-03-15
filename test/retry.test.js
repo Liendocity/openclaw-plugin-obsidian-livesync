@@ -1,7 +1,7 @@
 /**
  * Basic tests for retry utilities
  */
-import { retryWithBackoff, RetryableError } from '../src/retry';
+import { retryWithBackoff, RetryableError } from '../dist/retry.js';
 async function testRetrySuccess() {
     let attempts = 0;
     const result = await retryWithBackoff(async () => {

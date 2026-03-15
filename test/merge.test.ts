@@ -10,9 +10,9 @@ function testThreeWayMergeNoConflict() {
   const remote = 'line1\nline2\nline3-modified';
 
   const result = ThreeWayMerger.merge(base, local, remote);
-  console.assert(!result.conflicts, 'Should merge without conflicts');
-  console.assert(result.merged.includes('line2-modified'), 'Should include local change');
-  console.assert(result.merged.includes('line3-modified'), 'Should include remote change');
+  if (result.conflicts) throw new Error('Should merge without conflicts');
+  if (!result.merged.includes('line2-modified')) throw new Error('Should include local change');
+  if (!result.merged.includes('line3-modified')) throw new Error('Should include remote change');
   console.log('✓ testThreeWayMergeNoConflict passed');
 }
 
@@ -42,10 +42,11 @@ function testJsonMerge() {
   const local = { a: 1, b: 2, list: ['x', 'y'] };
   const remote = { a: 1, b: 3, list: ['x', 'z'] };
 
+  // 2-way merge should have 1 conflict (on 'b')
   const result = JsonMerger.merge(local, remote, { preferRemote: false });
-  console.assert(!result.conflicts.length, 'Should merge JSON objects');
-  console.assert(result.merged.b === 2, 'Should prefer local on conflict (preferRemote=false)');
-  console.assert(Array.isArray(result.merged.list), 'Should preserve arrays');
+  if (result.conflicts.length !== 1) throw new Error('Should have 1 conflict in 2-way merge');
+  if (result.merged.b !== 2) throw new Error('Should prefer local on conflict (preferRemote=false)');
+  if (!Array.isArray(result.merged.list)) throw new Error('Should preserve arrays');
   console.log('✓ testJsonMerge passed');
 }
 

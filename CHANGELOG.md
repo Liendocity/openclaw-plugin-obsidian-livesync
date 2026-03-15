@@ -1,5 +1,70 @@
 # Changelog
 
+## [2.0.0-p3] - 2026-03-15
+
+### 🚀 P3: Real-Time Bidirectional Sync + Vault Read/Search
+
+#### Real-Time Remote Watcher (CouchDB → OpenClaw)
+- **[NEW]** `startRemoteWatch()`: Subscribes to CouchDB `_changes` feed with `live: true, since: 'now'`
+  - Same mechanism used by native Obsidian LiveSync clients (~1-2s latency)
+  - Automatically decrypts and writes incoming chunks and file docs to local workspace
+  - Missing chunks fetched on-demand from CouchDB if not yet cached
+  - Respects ACL scope (only writes to allowed folders)
+  - Chunk cache (`remoteChunkCache`) avoids redundant fetches
+  - Restarts automatically on error
+- **[NEW]** `stopRemoteWatch()`: Cancels the changes feed and clears chunk cache
+- **[NEW]** `getRemoteWatcherStatus()`: Returns `{ active, cachedChunks }`
+- **[NEW]** Config option `remoteWatch: false` to disable (default: enabled)
+- **[IMPROVED]** `initialize()` now starts both local watcher (OpenClaw → CouchDB) and remote watcher (CouchDB → OpenClaw) automatically
+
+#### DB Name Override
+- **[NEW]** Config option `couchdb_dbname_override`: Override the CouchDB database name from setup_uri without re-encrypting credentials
+  - Companion to existing `couchdb_uri_override`
+  - Useful for testing with alternate databases (e.g. `obsidian_vault_v6`)
+
+#### Vault Read & Search Tools
+- **[NEW]** `obsidian_read_file(filePath)`: Read any file from the local vault
+  - Returns content, size in bytes, and last modified timestamp
+  - Binary files (png, jpg, pdf, etc.) return metadata only
+  - Respects ACL scope
+- **[NEW]** `obsidian_search(query, scope?, maxResults?)`: Full-text search across local .md/.txt/.json files
+  - Returns matching files with exact line numbers and text snippets (up to 5 matches per file)
+  - Optional `scope` filter (e.g. `'100.Sky'`) to restrict search to a folder
+  - Configurable `maxResults` (default: 20)
+  - Case-insensitive, respects ACL
+
+#### New Tools (4 new tools — total: 32)
+- `obsidian_read_file(filePath)`: Read a file from the local vault
+- `obsidian_search(query, scope?, maxResults?)`: Full-text search across vault
+- `stopRemoteWatch()`: Stop the CouchDB changes feed
+- `getRemoteWatcherStatus()`: Get real-time sync status
+
+#### Configuration (P3)
+```json
+{
+  "couchdb_dbname_override": "obsidian_vault_v6",
+  "remoteWatch": true
+}
+```
+
+#### Sync Architecture (after P3)
+
+| Direction | Mechanism | Latency |
+|---|---|---|
+| OpenClaw → CouchDB | `obsidian_sync_file` + chokidar file watcher | ~500ms |
+| CouchDB → OpenClaw | `_changes` feed (live, real-time) | ~1-2s |
+| Read vault | `obsidian_read_file` | immediate |
+| Search vault | `obsidian_search` | immediate |
+
+### ✅ P0 + P1 + P2 + P3 Complete
+
+- [x] P0: Professional foundation (salt, ACL, logging)
+- [x] P1: Robustness (watcher, retry, conflict detection, versioning)
+- [x] P2: Intelligence (merge, incremental sync, scheduling)
+- [x] P3: Real-time bidirectional sync + vault read/search
+
+---
+
 ## [2.0.0-p2] - 2026-03-13
 
 ### 🚀 P2: Intelligent Merging, Performance, Automation

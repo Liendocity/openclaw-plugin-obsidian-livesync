@@ -2,7 +2,7 @@
   "id": "obsidian-livesync",
   "name": "Obsidian LiveSync",
   "description": "Syncs your agent's workspace with an Obsidian vault using the Setup URI and Passphrase. Includes multi-agent ACL by scope (000-099 = Raul, 100+ = Sky).",
-  "version": "2.0.0-p2",
+  "version": "2.0.0-p3",
   "author": "Raul",
   "repository": "https://github.com/Liendocity/openclaw-plugin-obsidian-livesync",
   "configSchema": {
@@ -15,15 +15,62 @@
       },
       "setup_uri": { 
         "type": "string", 
-        "description": "The 'obsidian://setuplivesync?settings=...' URI from Obsidian LiveSync plugin settings. Must contain pbkdf2_salts."
+        "description": "The 'obsidian://setuplivesync?settings=...' URI from Obsidian LiveSync plugin settings. Will be parsed and removed automatically."
+      },
+      "couchdb_url": {
+        "type": "string",
+        "description": "The CouchDB URL"
+      },
+      "couchdb_user": {
+        "type": "string",
+        "description": "The CouchDB username"
+      },
+      "couchdb_password": {
+        "type": "string",
+        "writeOnly": true,
+        "description": "The CouchDB password"
+      },
+      "couchdb_dbname": {
+        "type": "string",
+        "description": "The CouchDB database name"
+      },
+      "pbkdf2_salts": {
+        "type": "string",
+        "description": "The Base64 encoded encryption salt"
       },
       "agentId": {
         "type": "string",
         "description": "Agent identifier for ACL scope validation. Defaults to 'sky'. Examples: 'sky', 'raul', 'shared'",
         "default": "sky"
+      },
+      "vaultPath": {
+        "type": "string",
+        "description": "Local path where the Obsidian vault is located. Defaults to current directory.",
+        "default": "."
+      },
+      "enforceAcl": {
+        "type": "boolean",
+        "description": "Whether to enforce folder-prefix-based access control. Set to false to sync everything.",
+        "default": true
+      },
+      "customScopes": {
+        "type": "object",
+        "description": "Custom folder prefixes for each agent. Example: {'raul': ['Notes', 'Diary'], 'sky': ['Memory']}"
+      },
+      "couchdb_uri_override": {
+        "type": "string",
+        "description": "Optional: Override the CouchDB URI from setup_uri (e.g. use local IP instead of external domain)."
+      },
+      "couchdb_dbname_override": {
+        "type": "string",
+        "description": "Optional: Override the CouchDB database name from setup_uri (e.g. 'obsidian_vault_v6')."
+      },
+      "salt": {
+        "type": "string",
+        "description": "Optional: Manual encryption salt (Base64). Use only if not present in setup_uri."
       }
     },
-    "required": ["passphrase", "setup_uri"]
+    "required": ["passphrase"]
   },
   "tools": [
     {
@@ -46,6 +93,30 @@
       "parameters": {
         "type": "object",
         "properties": {}
+      }
+    },
+    {
+      "name": "obsidian_read_file",
+      "description": "P3: Lee el contenido de un archivo del vault local de Obsidian. Respeta ACL por scope.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filePath": { "type": "string", "description": "Ruta relativa del archivo (e.g. '100.Sky/MEMORY.md')" }
+        },
+        "required": ["filePath"]
+      }
+    },
+    {
+      "name": "obsidian_search",
+      "description": "P3: Busca texto en todos los archivos .md del vault local. Devuelve archivos y líneas coincidentes.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "Texto a buscar" },
+          "scope": { "type": "string", "description": "Filtrar por carpeta raíz (e.g. '100.Sky'). Opcional." },
+          "maxResults": { "type": "integer", "description": "Máximo de archivos a devolver (default: 20)" }
+        },
+        "required": ["query"]
       }
     },
     {

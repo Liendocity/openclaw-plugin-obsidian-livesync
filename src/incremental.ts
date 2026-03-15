@@ -42,17 +42,17 @@ export class ChangeTracker {
     const deleted: string[] = [];
     const unchanged: string[] = [];
 
-    const currentHashes = new Map(this.syncState.fileHashes);
-    const currentTimestamps = new Map(this.syncState.fileTimestamps);
+    const currentHashes = this.syncState.fileHashes;
+    const currentTimestamps = this.syncState.fileTimestamps;
 
-    // Check existing files
-    for (const [filePath, currentData] of currentHashes) {
+    // Check for deleted files
+    for (const filePath of currentHashes.keys()) {
       if (!scannedFiles.has(filePath)) {
         deleted.push(filePath);
       }
     }
 
-    // Check scanned files
+    // Check scanned files for additions or modifications
     for (const [filePath, data] of scannedFiles) {
       const previousHash = currentHashes.get(filePath);
       const previousMtime = currentTimestamps.get(filePath);
@@ -97,12 +97,19 @@ export class ChangeTracker {
   markSynced(filePaths: string[]) {
     for (const filePath of filePaths) {
       if (fs.existsSync(filePath)) {
-        const content = fs.readFileSync(filePath);
-        const hash = crypto.createHash('sha256').update(content).digest('hex');
-        const mtime = fs.statSync(filePath).mtime.getTime();
+        try {
+          const stats = fs.statSync(filePath);
+          if (stats.isFile()) {
+            const content = fs.readFileSync(filePath);
+            const hash = crypto.createHash('sha256').update(content as any).digest('hex');
+            const mtime = stats.mtime.getTime();
 
-        this.syncState.fileHashes.set(filePath, hash);
-        this.syncState.fileTimestamps.set(filePath, mtime);
+            this.syncState.fileHashes.set(filePath, hash);
+            this.syncState.fileTimestamps.set(filePath, mtime);
+          }
+        } catch (err) {
+          console.warn(`[ChangeTracker] Failed to record sync state for ${filePath}:`, err);
+        }
       }
     }
     this.syncState.lastSyncTime = Date.now();
@@ -110,12 +117,10 @@ export class ChangeTracker {
   }
 
   /**
-   * Get files that need syncing
+   * Get files that were previously synced
    */
-  getChangedFiles(maxFiles?: number): string[] {
-    // Return added + modified, optionally limited
-    const changed = Array.from(this.syncState.fileHashes.keys());
-    return maxFiles ? changed.slice(0, maxFiles) : changed;
+  getSyncedFiles(): string[] {
+    return Array.from(this.syncState.fileHashes.keys());
   }
 
   /**
@@ -193,18 +198,54 @@ export class IncrementalSyncManager {
   private batchSize: number;
   private lastBatchTime: number = 0;
   private minBatchDelayMs: number;
+  private workspaceRoot: string;
 
   constructor(workspaceRoot: string, batchSize: number = 50, minBatchDelayMs: number = 1000) {
+    this.workspaceRoot = workspaceRoot;
     this.tracker = new ChangeTracker(workspaceRoot);
     this.batchSize = batchSize;
     this.minBatchDelayMs = minBatchDelayMs;
   }
 
   /**
-   * Get next batch of files to sync
-   * Respects batch size and delay
+   * Scan workspace and find files that need syncing
    */
-  getNextBatch(): { files: string[]; summary: ChangeSummary } | null {
+  private scanWorkspace(dirsToWatch: string[]): Map<string, { hash: string; mtime: number }> {
+    const results = new Map<string, { hash: string; mtime: number }>();
+    
+    const scanDir = (dir: string) => {
+      if (!fs.existsSync(dir)) return;
+      
+      const files = fs.readdirSync(dir);
+      for (const file of files) {
+        const fullPath = path.join(dir, file);
+        const stats = fs.statSync(fullPath);
+        
+        if (stats.isDirectory()) {
+          // Skip known hidden dirs
+          if (!file.startsWith('.')) {
+            scanDir(fullPath);
+          }
+        } else if (stats.isFile()) {
+          const relativePath = path.relative(this.workspaceRoot, fullPath).replace(/\\/g, '/');
+          const content = fs.readFileSync(fullPath);
+          const hash = crypto.createHash('sha256').update(content as any).digest('hex');
+          results.set(relativePath, { hash, mtime: stats.mtime.getTime() });
+        }
+      }
+    };
+
+    for (const subDir of dirsToWatch) {
+      scanDir(path.join(this.workspaceRoot, subDir));
+    }
+
+    return results;
+  }
+
+  /**
+   * Get next batch of files to sync
+   */
+  getNextBatch(dirsToWatch: string[]): { files: string[]; summary: ChangeSummary } | null {
     const now = Date.now();
     const timeSinceLastBatch = now - this.lastBatchTime;
 
@@ -212,24 +253,25 @@ export class IncrementalSyncManager {
       return null; // Too soon to sync
     }
 
-    const changedFiles = this.tracker.getChangedFiles(this.batchSize);
-    if (changedFiles.length === 0) {
-      return null; // Nothing to sync
+    // 1. Scan for changes
+    const scannedFiles = this.scanWorkspace(dirsToWatch);
+    const summary = this.tracker.detectChanges(scannedFiles);
+
+    // 2. Combine added and modified
+    const toSync = [...summary.added, ...summary.modified];
+    
+    if (toSync.length === 0) {
+      this.tracker.updateState(scannedFiles); // Update state even if no changes (for deletions)
+      return null;
     }
 
-    // Create summary (simplified)
-    const summary: ChangeSummary = {
-      added: [],
-      modified: changedFiles.slice(0, Math.min(changedFiles.length, 10)),
-      deleted: [],
-      unchanged: [],
-      totalFiles: changedFiles.length
-    };
-
+    // 3. Limit to batch size
+    const batch = toSync.slice(0, this.batchSize);
+    
     this.lastBatchTime = now;
 
     return {
-      files: changedFiles,
+      files: batch,
       summary
     };
   }
@@ -259,3 +301,4 @@ export class IncrementalSyncManager {
     this.lastBatchTime = 0;
   }
 }
+

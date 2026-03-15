@@ -1,7 +1,7 @@
 /**
  * Basic tests for conflict resolver
  */
-import { ConflictResolver, VersionManager } from '../src/conflict';
+import { ConflictResolver, VersionManager } from '../dist/conflict.js';
 function testLastWriteWins() {
     const resolver = new ConflictResolver('last-write-wins');
     const local = {

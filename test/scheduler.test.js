@@ -1,7 +1,7 @@
 /**
  * Tests for sync scheduling
  */
-import { SimpleCronParser, SyncScheduler } from '../src/scheduler';
+import { SimpleCronParser, SyncScheduler } from '../dist/scheduler.js';
 function testCronParseBasic() {
     const parsed = SimpleCronParser.parse('0 0 * * *');
     console.assert(parsed?.minute?.includes(0), 'Should parse minute');

@@ -1,0 +1,24 @@
+{
+  "passphrase": "GzCqRp3G6fKoTZSskcm4rBDp4",
+  "agentId": "sky",
+  "vaultPath": "../../RCV_Obsidian_Vault",
+  "enforceAcl": true,
+  "salt": "IKpSeAfz3JzsYYL4GHzzgl==",
+  "couchdb_dbname_override": "obsidian_vault_v7",
+  "autoWatch": true,
+  "watchedScopes": [
+    "100",
+    "101",
+    "102",
+    "103",
+    "104"
+  ],
+  "remoteWatch": true,
+  "incrementalSync": true,
+  "autoMerge": true,
+  "conflictStrategy": "last-write-wins",
+  "couchdb_url": "https://couchdb.fcde2v.site",
+  "couchdb_user": "rcordon",
+  "couchdb_password": "LiendoCDB2014.",
+  "couchdb_dbname": "obsidian_vault_v4"
+}

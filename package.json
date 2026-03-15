@@ -1,8 +1,11 @@
 {
-  "name": "openclaw-plugin-obsidian-livesync",
-  "version": "2.0.0",
-  "description": "Production-grade synchronization plugin for OpenClaw ↔ Obsidian vault via Self-hosted LiveSync (CouchDB). P0: Professional foundation (ACL, logging), P1: Robust automation (watcher, retry, versioning), P2: Intelligent performance (merge strategies, incremental sync, scheduling).",
+  "name": "obsidian-livesync",
+  "version": "2.0.0-p3",
+  "description": "Production-grade synchronization plugin for OpenClaw ↔ Obsidian vault via Self-hosted LiveSync (CouchDB). P0: Professional foundation (ACL, logging), P1: Robust automation (watcher, retry, versioning), P2: Intelligent performance (merge strategies, incremental sync, scheduling), P3: Real-time bidirectional sync + vault read/search.",
   "main": "dist/index.js",
+  "openclaw": {
+    "extensions": ["./dist/index.js"]
+  },
   "type": "module",
   "keywords": [
     "openclaw",
