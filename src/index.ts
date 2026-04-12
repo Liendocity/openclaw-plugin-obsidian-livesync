@@ -127,6 +127,7 @@ export class ObsidianLiveSyncPlugin {
   private logger: StructuredLogger;
   private scopeValidator: ScopeValidator;
   private pbkdf2Salts: Uint8Array[] = [];
+  private e2eeEnabled: boolean = true;
   private watcher: WorkspaceWatcher | null = null;
   private conflictResolver: ConflictResolver;
   private versionManager: VersionManager;
@@ -247,7 +248,7 @@ export class ObsidianLiveSyncPlugin {
           console.error('[INIT] Error al intentar guardar las credenciales limpias en config.json:', err);
         }
       } else {
-        throw new Error('No se ha proporcionado un setup_uri válido ni credenciales limpias en el config.json');
+        throw new Error('Faltan datos de conexión. Se requiere couchdb_url, couchdb_user, couchdb_password y couchdb_dbname en config.json, o un setup_uri válido.');
       }
 
       // Allow overriding the CouchDB URI via config (e.g. use local IP instead of external domain)
@@ -262,6 +263,10 @@ export class ObsidianLiveSyncPlugin {
         this.vaultSettings.couchDB_DBNAME = this.config.couchdb_dbname_override;
       }
       
+      // E2EE flag: if explicitly false, skip all encryption
+      this.e2eeEnabled = this.config.e2ee !== false;
+      console.log(`[INIT] E2EE: ${this.e2eeEnabled}`);
+      
       console.log('--- ENCRYPTION VALUES (SAFE) ---');
       for (const [k, v] of Object.entries(this.vaultSettings)) {
         if (k.toLowerCase().includes('salt') || k.toLowerCase().includes('passphrase')) {
@@ -270,30 +275,23 @@ export class ObsidianLiveSyncPlugin {
         }
       }
       
-      // Intentar extraer el salt de varias fuentes
-      const foundSaltsBase64 = new Set<string>();
-      
-      if (this.config.salt) foundSaltsBase64.add(this.config.salt);
-      if (this.vaultSettings.pbkdf2_salts) foundSaltsBase64.add(this.vaultSettings.pbkdf2_salts);
-      
-      // Fallback: Buscar alguna tecla que contenga "salt"
-      for (const [k, v] of Object.entries(this.vaultSettings)) {
-        if (k.toLowerCase().includes('salt') && typeof v === 'string') {
-          foundSaltsBase64.add(v);
+      this.e2eeEnabled = this.config.e2ee !== false;
+      if (this.e2eeEnabled) {
+        const foundSaltsBase64 = new Set<string>();
+        if (this.config.salt) foundSaltsBase64.add(this.config.salt);
+        if (this.vaultSettings.pbkdf2_salts) foundSaltsBase64.add(this.vaultSettings.pbkdf2_salts);
+        for (const [k, v] of Object.entries(this.vaultSettings)) {
+          if (k.toLowerCase().includes('salt') && typeof v === 'string') {
+            foundSaltsBase64.add(v);
+          }
         }
+        for (const s of foundSaltsBase64) {
+          try { this.pbkdf2Salts.push(new Uint8Array(Buffer.from(s, 'base64'))); } catch (e) {}
+        }
+        console.log(`[INIT] ${this.pbkdf2Salts.length} sales PBKDF2 preparadas.`);
+      } else {
+        console.log('[INIT] E2EE desactivado.');
       }
-
-      // Hardcoded known salts from other projects (rtmrz3/vrtmrz) as last resort
-      foundSaltsBase64.add('WI//FsJF51+UoRStP3ZQ8nOPpK33Hd4srTiQswHfatg='); // DB Salt
-      foundSaltsBase64.add('IKpSeAfz3JzsYYL4GHzzgl=='); // User/URI Salt
-
-      for (const s of foundSaltsBase64) {
-        try {
-          this.pbkdf2Salts.push(new Uint8Array(Buffer.from(s, 'base64')));
-        } catch (e) {}
-      }
-      
-      console.log(`[INIT] ${this.pbkdf2Salts.length} sales PBKDF2 preparadas.`);
       
       const remoteUrl = `${this.vaultSettings.couchDB_URI}/${this.vaultSettings.couchDB_DBNAME}`;
       this.db = new PouchDB(remoteUrl, {
@@ -303,19 +301,20 @@ export class ObsidianLiveSyncPlugin {
         }
       });
 
-      // **P0 UPDATE**: Intentar obtener el salt directamente desde la base de datos
-      try {
-        const localParams = await safeDbGet(this.db, '_local/obsidian_livesync_sync_parameters', 1);
-        if (localParams && localParams.pbkdf2salt) {
-          const dbSalt = localParams.pbkdf2salt;
-          if (!foundSaltsBase64.has(dbSalt)) {
-            console.log(`[INIT] Nueva sal encontrada en DB: ${dbSalt.substring(0, 10)}...`);
-            this.pbkdf2Salts.unshift(new Uint8Array(Buffer.from(dbSalt, 'base64')));
-            foundSaltsBase64.add(dbSalt);
+      // Salt from _local (only if E2EE enabled)
+      if (this.e2eeEnabled) {
+        try {
+          const localParams = await safeDbGet(this.db, '_local/obsidian_livesync_sync_parameters', 1);
+          if (localParams && localParams.pbkdf2salt) {
+            const dbSalt = localParams.pbkdf2salt;
+            if (!this.pbkdf2Salts.some(s => Buffer.from(s).toString('base64') === dbSalt)) {
+              console.log(`[INIT] Nueva sal encontrada en DB: ${dbSalt.substring(0, 10)}...`);
+              this.pbkdf2Salts.unshift(new Uint8Array(Buffer.from(dbSalt, 'base64')));
+            }
           }
+        } catch (e) {
+          console.warn('[INIT] No se pudo obtener _local/obsidian_livesync_sync_parameters');
         }
-      } catch (e) {
-        console.warn('[INIT] No se pudo obtener _local/obsidian_livesync_sync_parameters');
       }
       this.logger.log({
         action: 'sync_file',
@@ -586,9 +585,10 @@ export class ObsidianLiveSyncPlugin {
 
       const content = fs.readFileSync(fullPath);
       const localContent = content.toString('utf-8'); // Define localContent for potential merge
-      if (this.pbkdf2Salts.length === 0) {
-        throw new Error('Salt no inicializado. Ejecuta initialize() primero.');
-      }
+      // Salt check only needed for E2EE — without salts, content is stored as plain text
+      // if (this.pbkdf2Salts.length === 0) {
+      //   throw new Error('Salt no inicializado. Ejecuta initialize() primero.');
+      // }
 
       // Chunking y encripción (using helper)
       const { children, chunkCount: initialChunkCount } = await this.chunkAndEncrypt(content);
@@ -965,25 +965,35 @@ export class ObsidianLiveSyncPlugin {
     const CHUNK_SIZE = 50 * 1024;
     const children: string[] = [];
     let chunkCount = 0;
+    const e2eeEnabled = this.pbkdf2Salts.length > 0;
 
     for (let i = 0; i < content.length; i += CHUNK_SIZE) {
       const chunkData = content.slice(i, i + CHUNK_SIZE);
       const chunkId = `h:+${this.hasher.h64(chunkData.toString('binary')).toString(36)}`;
 
-      const encryptionSalt = this.pbkdf2Salts.length > 0 ? this.pbkdf2Salts[0] : null;
-      const encryptedData = await encryptHKDF(
-        chunkData.toString('base64'),
-        this.config.passphrase,
-        encryptionSalt as any
-      );
+      let chunkDataStr: string;
+      let eField: boolean | undefined;
+      if (e2eeEnabled) {
+        const encryptionSalt = this.pbkdf2Salts[0];
+        chunkDataStr = await encryptHKDF(
+          chunkData.toString('base64'),
+          this.config.passphrase,
+          encryptionSalt as any
+        );
+        eField = true;
+      } else {
+        chunkDataStr = chunkData.toString('utf8');
+        eField = undefined;
+      }
 
       try {
-        await safeDbPut(this.db, {
+        const chunkDoc: any = {
           _id: chunkId,
-          data: encryptedData,
-          type: 'leaf',
-          e_: true
-        }, 2);
+          data: chunkDataStr,
+          type: 'leaf'
+        };
+        if (eField !== undefined) chunkDoc.e_ = eField;
+        await safeDbPut(this.db, chunkDoc, 2);
         chunkCount++;
       } catch (err: any) {
         if (err.status !== 409) throw err;

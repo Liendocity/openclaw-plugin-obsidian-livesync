@@ -47,6 +47,8 @@ export async function retryWithBackoff<T>(
       return await fn();
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
+      // Don't retry on 409 conflicts
+      if ((err as any).status === 409) throw err;
 
       // Don't retry on last attempt
       if (attempt === maxRetries) {
@@ -90,10 +92,25 @@ export async function safeDbPut(
   doc: any,
   retries: number = 3
 ): Promise<any> {
-  return retryWithBackoff(
-    () => db.put(doc),
-    { maxRetries: retries }
-  );
+  try {
+    return await retryWithBackoff(
+      () => db.put(doc),
+      { maxRetries: retries }
+    );
+  } catch (err: any) {
+    if (err.status === 409) {
+      // Get latest rev and retry once
+      try {
+        const latest = await db.get(doc._id);
+        doc._rev = latest._rev;
+        return await db.put(doc);
+      } catch (e) {
+        // Already exists with same content — that's fine
+        try { return await db.get(doc._id); } catch (e2) { return { ok: true, id: doc._id, existing: true }; }
+      }
+    }
+    throw err;
+  }
 }
 
 export async function safeDbGet(
